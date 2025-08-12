@@ -1,0 +1,23 @@
+package routers
+
+import (
+	"dag-project/handlers"
+
+	"github.com/gorilla/mux"
+)
+
+// RegisterRoutes sets up all the HTTP routes for the DAG
+func RegisterRoutes(r *mux.Router, h *handlers.Handler) {
+
+	// Creates a new node in the DAG with no parents initially
+	r.HandleFunc("/nodes", h.AddNode).Methods("POST")
+
+	//  Approves a new node that references existing nodes as parents
+	r.HandleFunc("/nodes/approve", h.ApproveNode).Methods("POST")
+
+	// GET /nodes/tips-selection - Retrieves all tip nodes (nodes with no parents and weight 0)
+	r.HandleFunc("/nodes/tips-selection", h.GetTips).Methods("GET")
+
+	// Used for identifying the most referenced/important nodes in the graph
+	r.HandleFunc("/nodes/highest-weight", h.GetHighestWeightNode).Methods("GET")
+}

@@ -1,0 +1,87 @@
+# DAG Project
+
+A simple **Directed Acyclic Graph (DAG)** implementation in Go, with LevelDB persistence and a REST API for node operations.
+
+🛠️ Tech Stack
+* Go
+* LevelDB
+* Gorilla Mux
+* Zap Logger
+* Viper
+
+## 📌 Features
+- Add new nodes (with or without parents)
+- Approve nodes (referencing parent nodes)
+- Retrieve tips (nodes with no parents or unapproved)
+- Tip selection logic
+- LevelDB as storage
+- JSON API responses
+
+## 📂 Project Structure
+
+├── config/ # YAML configuration files
+├── dag/ # DAG logic
+├── db/ # Database connection to LevelDB
+├── handlers/ # HTTP request handlers
+├── logger/ # Logging setup (zap)
+├── models/ # Data structures
+├── repository/ # Repository layer (DB operations)
+├── routers/ # Route definitions
+├── main.go # Entry point
+└── go.mod
+
+
+## ⚙️ Configuration
+Configuration is loaded from `config/config.yaml`:
+
+```yaml
+server:
+  port: 8080
+
+leveldb:
+  path: "./data"
+
+log:
+  app_log_file: "logs/app.log"
+  level: "debug"
+
+
+## Endpoints
+
+## base url: http://localhost:808
+
+### 1. Add Node
+**POST** `/nodes`
+
+Creates a new node in the DAG with no parents initially.
+
+#### Request Body
+```json
+{
+  "id": "string",
+  "parents": []
+}
+```
+
+### 2. Approve Node
+**POST** `/nodes/approve`
+
+Approves a new node that references previous node(s) as parents. This also increases the weight of each parent by 1.
+
+#### Request Body
+```json
+{
+  "id": "string",
+  "parents": ["parent_node_id_1", "parent_node_id_2"]
+}
+```
+
+### 3. Get Tips
+**GET** `/nodes/tips-selection`
+
+Retrieves all tip nodes (nodes with no parents and weight 0).
+
+### 4. Get Highest Weight Node
+**GET** `/nodes/highest-weight`
+
+Retrieves the node with the highest weight in the DAG.

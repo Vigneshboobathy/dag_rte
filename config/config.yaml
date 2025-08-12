@@ -1,0 +1,9 @@
+server:
+  port: 8080
+
+leveldb:
+  path: "./leveldb_data"
+
+log:
+  app_log_file: "./logs/app.log"
+  level: "info"
