@@ -86,3 +86,19 @@ Retrieves the node with the highest weight in the DAG.
 **GET** `/nodes/tips-selection`
 
 Check selected tip via MCMC
+
+## Running Tests
+
+This project includes unit tests for handler functions, validating:
+- Node creation (`/nodes`)
+- Duplicate node handling
+- Node approval and parent weight increment (`/nodes/approve`)
+- Missing parent validation
+- Retrieving highest-weight node (`/nodes/highest-weight`)
+- Tip selection using MCMC algorithm (`/nodes/tip-selection`)
+
+### Run all tests
+go test ./... -v
+
+## Run tests with coverage percentage
+go test ./... -cover
