@@ -45,11 +45,12 @@ log:
   app_log_file: "logs/app.log"
   level: "debug"
 
+## Running the Program
+go run cmd/main.go
+
+## base url: http://localhost:8080
 
 ## Endpoints
-
-## base url: http://localhost:808
-
 ### 1. Add Node
 **POST** `/nodes`
 
@@ -58,8 +59,8 @@ Creates a new node in the DAG with no parents initially.
 #### Request Body
 ```json
 {
-  "id": "string",
-  "parents": []
+    "id": "B",
+    "parents": []
 }
 ```
 
@@ -76,12 +77,12 @@ Approves a new node that references previous node(s) as parents. This also incre
 }
 ```
 
-### 3. Get Tips
-**GET** `/nodes/tips-selection`
-
-Retrieves all tip nodes (nodes with no parents and weight 0).
-
-### 4. Get Highest Weight Node
+### 3. Get Highest Weight Node
 **GET** `/nodes/highest-weight`
 
 Retrieves the node with the highest weight in the DAG.
+
+### 4. Get Tips
+**GET** `/nodes/tips-selection`
+
+Check selected tip via MCMC

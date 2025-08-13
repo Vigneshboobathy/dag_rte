@@ -86,21 +86,6 @@ func (h *Handler) ApproveNode(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// GetTips handles GET requests to retrieve all tip nodes in the DAG
-func (h *Handler) GetTips(w http.ResponseWriter, r *http.Request) {
-	tips, err := h.DAG.GetTips()
-	w.Header().Set("Content-Type", "application/json")
-	if err != nil {
-		logger.Logger.Error("Failed to get tips", zap.Error(err))
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-		return
-	}
-
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(tips)
-}
-
 // GetHighestWeightNode handles GET requests to retrieve the node with the highest weight
 func (h *Handler) GetHighestWeightNode(w http.ResponseWriter, r *http.Request) {
 	node, err := h.DAG.GetHighestWeightNode()
@@ -109,5 +94,22 @@ func (h *Handler) GetHighestWeightNode(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	json.NewEncoder(w).Encode(node)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"message": "highest weighted node",
+		"node":    node,
+	})
+}
+
+// GetTipMCMC handles GET requests for a tip selected using MCMC
+func (h *Handler) GetTipMCMC(w http.ResponseWriter, r *http.Request) {
+	tip, err := h.DAG.TipSelection()
+	w.Header().Set("Content-Type", "application/json")
+	if err != nil {
+		logger.Logger.Error("Failed to select tip with MCMC", zap.Error(err))
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(tip)
 }
