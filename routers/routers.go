@@ -18,6 +18,17 @@ func RegisterRoutes(r *mux.Router, h *handlers.Handler) {
 	// Used for identifying the most referenced/important nodes in the graph
 	r.HandleFunc("/nodes/highest-weight", h.GetHighestWeightNode).Methods("GET")
 
+	// Used for identifying the most important nodes including indirect approvals
+	r.HandleFunc("/nodes/highest-cumulative-weight", h.GetHighestCumulativeWeightNode).Methods("GET")
+
 	// Retrieves a tip using the MCMC algorithm
 	r.HandleFunc("/nodes/tip-selection", h.GetTipMCMC).Methods("GET")
+
+	// Used for identifying DAG state synchronization 
+	r.HandleFunc("/sync/validate", h.ValidateDAGConsistency).Methods("GET")
 }
+
+	
+
+
+
