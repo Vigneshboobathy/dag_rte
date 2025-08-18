@@ -1,7 +1,9 @@
 package dag
 
 import (
+	"crypto/sha256"
 	"errors"
+	"fmt"
 	"math"
 	"math/rand"
 	"sync"
@@ -150,10 +152,10 @@ func (d *DAG) checkForCircularReferences(_ string, parentIDs []string) error {
 	var hasCycle func(string) bool
 	hasCycle = func(currentID string) bool {
 		if recStack[currentID] {
-			return true 
+			return true
 		}
 		if visited[currentID] {
-			return false 
+			return false
 		}
 
 		visited[currentID] = true
@@ -397,7 +399,7 @@ func (d *DAG) walkToTip(nodeID string, children map[string][]string, nodesByID m
 			return nil
 		}
 
-		// Randomly choose a child 
+		// Randomly choose a child
 		nextID := childIDs[rnd.Intn(len(childIDs))]
 		currentID = nextID
 	}
@@ -443,9 +445,85 @@ func (d *DAG) UpdateNode(node *models.Node) error {
 	return d.repo.PutNode(node)
 }
 
+func (d *DAG) CreateCheckpoint(id string) (*models.Checkpoint, error) {
+	d.mux.Lock()
+	defer d.mux.Unlock()
+
+	nodes, err := d.repo.GetAllNodes()
+	if err != nil {
+		return nil, err
+	}
+
+	// Create root hash (simple hash of concatenated node IDs)
+	hash := ""
+	for _, n := range nodes {
+		hash += n.ID
+	}
+	rootHash := fmt.Sprintf("%x", sha256.Sum256([]byte(hash)))
+
+	cp := &models.Checkpoint{
+		ID:        id,
+		Timestamp: nowMillis(),
+		RootHash:  rootHash,
+		NodeCount: len(nodes),
+	}
+
+	err = d.repo.PutCheckpoint(cp)
+	if err != nil {
+		return nil, err
+	}
+	return cp, nil
+}
+
+func (d *DAG) GetLatestCheckpoint() (*models.Checkpoint, error) {
+	return d.repo.GetLatestCheckpoint()
+}
+
+// GetSyncState computes and returns the current synchronization state of the DAG
+func (d *DAG) GetSyncState() (*models.SyncState, error) {
+	d.mux.Lock()
+	defer d.mux.Unlock()
+
+	nodes, err := d.repo.GetAllNodes()
+	if err != nil {
+		return nil, err
+	}
+
+	// Build children map to count tips
+	children := make(map[string][]string)
+	for _, n := range nodes {
+		for _, p := range n.Parents {
+			children[p] = append(children[p], n.ID)
+		}
+	}
+
+	tipCount := 0
+	for _, n := range nodes {
+		if len(children[n.ID]) == 0 {
+			tipCount++
+		}
+	}
+
+	// Compute root hash similar to checkpoints (concat IDs, then sha256)
+	concat := ""
+	for _, n := range nodes {
+		concat += n.ID
+	}
+	rootHash := fmt.Sprintf("%x", sha256.Sum256([]byte(concat)))
+
+	latest, _ := d.repo.GetLatestCheckpoint()
+
+	state := &models.SyncState{
+		LatestCheckpoint: latest,
+		NodeCount:        len(nodes),
+		TipCount:         tipCount,
+		RootHash:         rootHash,
+		Timestamp:        nowMillis(),
+	}
+	return state, nil
+}
+
 // nowMillis returns current time in milliseconds
 func nowMillis() int64 {
 	return time.Now().UnixMilli()
 }
-
-

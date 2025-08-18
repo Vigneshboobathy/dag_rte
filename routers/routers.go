@@ -24,11 +24,13 @@ func RegisterRoutes(r *mux.Router, h *handlers.Handler) {
 	// Retrieves a tip using the MCMC algorithm
 	r.HandleFunc("/nodes/tip-selection", h.GetTipMCMC).Methods("GET")
 
-	// Used for identifying DAG state synchronization 
-	r.HandleFunc("/sync/validate", h.ValidateDAGConsistency).Methods("GET")
+	// Creates a new checkpoint by storing the current state of the DAG.
+	r.HandleFunc("/checkpoints", h.CreateCheckpoint).Methods("POST")
+
+	// Retrieves the most recent checkpoint to restore the DAG state.
+	r.HandleFunc("/checkpoints/latest", h.GetLatestCheckpoint).Methods("GET")
+
+	// Retrieves the current synchronization state.
+	r.HandleFunc("/sync/state", h.GetSyncState).Methods("GET")
+
 }
-
-	
-
-
-

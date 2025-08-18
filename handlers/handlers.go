@@ -3,8 +3,6 @@ package handlers
 import (
 	"encoding/json"
 	"net/http"
-	"sync"
-	"time"
 
 	"dag-project/dag"
 	"dag-project/logger"
@@ -15,8 +13,7 @@ import (
 
 // Handler contains the HTTP handlers for the DAG API endpoints
 type Handler struct {
-	DAG       *dag.DAG
-	syncMutex sync.RWMutex
+	DAG *dag.DAG
 }
 
 // NewHandler creates and returns a new Handler instance
@@ -170,91 +167,48 @@ func (h *Handler) GetTipMCMC(w http.ResponseWriter, r *http.Request) {
 	logger.Logger.Info("Tip selected using MCMC", zap.String("node_id", tip.ID))
 }
 
-// ValidateDAGConsistency checks if the DAG weights are consistent
-func (h *Handler) ValidateDAGConsistency(w http.ResponseWriter, r *http.Request) {
-	startTime := time.Now()
-
-	h.syncMutex.Lock()
-	defer h.syncMutex.Unlock()
-
-	logger.Logger.Info("DAG consistency validation started")
-
-	allNodes, err := h.DAG.GetAllNodes()
-	if err != nil {
-		http.Error(w, "Failed to retrieve nodes for validation", http.StatusInternalServerError)
+// CreateCheckpoint handles POST requests to create a new checkpoint
+func (h *Handler) CreateCheckpoint(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.ID == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid request body"})
 		return
 	}
 
-	children := make(map[string][]string)
-	for _, node := range allNodes {
-		for _, parentID := range node.Parents {
-			children[parentID] = append(children[parentID], node.ID)
-		}
+	cp, err := h.DAG.CreateCheckpoint(body.ID)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
 	}
 
-	inconsistencies := []map[string]interface{}{}
-	totalNodes := len(allNodes)
-	validNodes := 0
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(cp)
+}
 
-	for _, node := range allNodes {
-		expectedCumulative := int64(node.Weight)
-
-		var calculateDescendantWeight func(string) int64
-		calculateDescendantWeight = func(nID string) int64 {
-			descendantWeight := int64(0)
-			for _, childID := range children[nID] {
-				childNode, err := h.DAG.GetNode(childID)
-				if err != nil {
-					continue
-				}
-				descendantWeight += int64(childNode.Weight)
-				descendantWeight += calculateDescendantWeight(childID)
-			}
-			return descendantWeight
-		}
-
-		expectedCumulative += calculateDescendantWeight(node.ID)
-
-		if node.CumulativeWeight != expectedCumulative {
-			inconsistencies = append(inconsistencies, map[string]interface{}{
-				"node_id":             node.ID,
-				"expected_cumulative": expectedCumulative,
-				"actual_cumulative":   node.CumulativeWeight,
-				"difference":          expectedCumulative - node.CumulativeWeight,
-			})
-		} else {
-			validNodes++
-		}
+// Get LatestCheckpoint handles GET requests for the latest checkpoint
+func (h *Handler) GetLatestCheckpoint(w http.ResponseWriter, r *http.Request) {
+	cp, err := h.DAG.GetLatestCheckpoint()
+	if err != nil || cp == nil {
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{"error": "No checkpoint found"})
+		return
 	}
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(cp)
+}
 
-	validationResult := map[string]interface{}{
-		"validation_time":    time.Now().Format(time.RFC3339),
-		"total_nodes":        totalNodes,
-		"valid_nodes":        validNodes,
-		"inconsistent_nodes": len(inconsistencies),
-		"inconsistencies":    inconsistencies,
-		"duration":           time.Since(startTime).String(),
+// GetSyncState handles GET requests for the current DAG sync state
+func (h *Handler) GetSyncState(w http.ResponseWriter, r *http.Request) {
+	state, err := h.DAG.GetSyncState()
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
 	}
-
-	if totalNodes == 0 {
-		validationResult["consistency_percentage"] = 100.0
-	} else {
-		validationResult["consistency_percentage"] = float64(validNodes) / float64(totalNodes) * 100
-	}
-
-	if len(inconsistencies) > 0 {
-		validationResult["status"] = "inconsistent"
-		w.WriteHeader(http.StatusConflict)
-	} else {
-		validationResult["status"] = "consistent"
-		w.WriteHeader(http.StatusOK)
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(validationResult)
-
-	logger.Logger.Info("DAG consistency validation completed",
-		zap.Int("total_nodes", totalNodes),
-		zap.Int("valid_nodes", validNodes),
-		zap.Int("inconsistencies", len(inconsistencies)))
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(state)
 }

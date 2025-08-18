@@ -11,6 +11,8 @@ type NodeRepositoryInterface interface {
 	PutNode(node *models.Node) error
 	GetNode(id string) (*models.Node, error)
 	GetAllNodes() ([]*models.Node, error)
+	PutCheckpoint(cp *models.Checkpoint) error
+	GetLatestCheckpoint() (*models.Checkpoint, error)
 }
 
 // NodeRepository implements the NodeRepositoryInterface using LevelDB as the storage backend
@@ -60,3 +62,35 @@ func (r *NodeRepository) GetAllNodes() ([]*models.Node, error) {
 	}
 	return nodes, iter.Error()
 }
+
+// Creates a new checkpoint by storing the current state of the DAG
+func (r *NodeRepository) PutCheckpoint(cp *models.Checkpoint) error {
+	data, err := json.Marshal(cp)
+	if err != nil {
+		return err
+	}
+	key := []byte("checkpoint:" + cp.ID)
+	return r.db.Put(key, data)
+}
+
+// Retrieves the most recent checkpoint to restore the DAG state
+func (r *NodeRepository) GetLatestCheckpoint() (*models.Checkpoint, error) {
+	iter := r.db.NewIterator()
+	defer iter.Release()
+
+	var latest *models.Checkpoint
+	for iter.Next() {
+		key := string(iter.Key())
+		if len(key) >= 11 && key[:11] == "checkpoint:" {
+			var cp models.Checkpoint
+			if err := json.Unmarshal(iter.Value(), &cp); err != nil {
+				return nil, err
+			}
+			if latest == nil || cp.Timestamp > latest.Timestamp {
+				latest = &cp
+			}
+		}
+	}
+	return latest, iter.Error()
+}
+	

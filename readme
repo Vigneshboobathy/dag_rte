@@ -14,6 +14,8 @@ A simple **Directed Acyclic Graph (DAG)** implementation in Go, with LevelDB per
 - Approve nodes (referencing parent nodes)
 - Retrieve tips (nodes with no parents or unapproved)
 - Tip selection logic
+- Create and retrieve checkpoints
+- Expose sync state (latest checkpoint, node/tip counts, root hash)
 - LevelDB as storage
 - JSON API responses
 
@@ -106,7 +108,7 @@ Retrieves the node with the highest cumulative weight, which includes both direc
 }
 ```
 ### 5. Get Tips
-**GET** `/nodes/tips-selection`
+**GET** `/nodes/tip-selection`
 
 Check selected tip via MCMC
 
@@ -122,28 +124,66 @@ Check selected tip via MCMC
   }
   ```
 
-### 6. Validate DAG Consistency
-**GET** `/sync/validate`
+### 6. Create Checkpoint
+**POST** `/checkpoints`
 
-Performs a comprehensive validation of the DAG to check if all cumulative weights are consistent.
-   - Calculates expected cumulative weights for all nodes
-   - Compares with actual stored values
-   - Identifies any inconsistencies for debugging
+Creates a new checkpoint from the current DAG state.
 
-#### Response Body
-
+#### Request Body
 ```json
 {
-    "consistency_percentage": 100,
-    "duration": "0s",
-    "inconsistencies": [],
-    "inconsistent_nodes": 0,
-    "status": "consistent",
-    "total_nodes": 11,
-    "valid_nodes": 11,
-    "validation_time": "2025-08-14T16:02:14+05:30"
-  }
-  ```
+  "id": "cp1"
+}
+```
+
+#### Response Body
+```json
+{
+  "checkpoint_id": "cp1",
+  "timestamp": 1755166584662,
+  "root_hash": "<sha256-of-concatenated-node-ids>",
+  "node_count": 2
+}
+```
+
+### 7. Get Latest Checkpoint
+**GET** `/checkpoints/latest`
+
+Retrieves the most recent checkpoint by timestamp.
+
+#### Response Body
+```json
+{
+  "checkpoint_id": "cp1",
+  "timestamp": 1755166584662,
+  "root_hash": "<sha256-of-concatenated-node-ids>",
+  "node_count": 2
+}
+```
+
+### 8. Get Sync State
+**GET** `/sync/state`
+
+Returns current DAG synchronization state.
+
+#### Response Body
+```json
+{
+  "latest_checkpoint": {
+    "checkpoint_id": "cp1",
+    "timestamp": 1755166584662,
+    "root_hash": "<sha256-of-concatenated-node-ids>",
+    "node_count": 2
+  },
+  "node_count": 2,
+  "tip_count": 1,
+  "root_hash": "<sha256-of-concatenated-node-ids>",
+  "timestamp": 1755166590000
+}
+```
+
+Note: `tip_count` is the number of nodes with no children (unapproved tips)
+
 ## Running Tests
 
 This project includes unit tests for handler functions, validating:

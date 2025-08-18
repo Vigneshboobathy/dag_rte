@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/gorilla/mux"
 	"go.uber.org/zap"
@@ -21,12 +22,13 @@ import (
 )
 
 type mockRepo struct {
-	mu    sync.Mutex
-	nodes map[string]*models.Node
+	mu          sync.Mutex
+	nodes       map[string]*models.Node
+	checkpoints map[string]*models.Checkpoint
 }
 
 func newMockRepo() *mockRepo {
-	return &mockRepo{nodes: make(map[string]*models.Node)}
+	return &mockRepo{nodes: make(map[string]*models.Node), checkpoints: make(map[string]*models.Checkpoint)}
 }
 
 func (m *mockRepo) PutNode(node *models.Node) error {
@@ -58,6 +60,30 @@ func (m *mockRepo) GetAllNodes() ([]*models.Node, error) {
 		res = append(res, &copy)
 	}
 	return res, nil
+}
+
+func (m *mockRepo) PutCheckpoint(cp *models.Checkpoint) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	copy := *cp
+	m.checkpoints[cp.ID] = &copy
+	return nil
+}
+
+func (m *mockRepo) GetLatestCheckpoint() (*models.Checkpoint, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(m.checkpoints) == 0 {
+		return nil, fmt.Errorf("no checkpoint")
+	}
+	var latest *models.Checkpoint
+	for _, cp := range m.checkpoints {
+		if latest == nil || cp.Timestamp > latest.Timestamp {
+			c := *cp
+			latest = &c
+		}
+	}
+	return latest, nil
 }
 
 func testServer() (*mux.Router, *mockRepo) {
@@ -495,115 +521,116 @@ func TestGetTipMCMC_WeightBasedSelection(t *testing.T) {
 	t.Logf("Tip selection distribution: %v", tipSelections)
 }
 
-func TestValidateDAGConsistency_Empty(t *testing.T) {
+func TestCreateCheckpoint_Success(t *testing.T) {
 	router, _ := testServer()
 
-	resp := httptest.NewRecorder()
-	router.ServeHTTP(resp, httptest.NewRequest(http.MethodGet, "/sync/validate", nil))
-	if resp.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d, body=%s", resp.Code, resp.Body.String())
+	// create two nodes
+	for _, id := range []string{"A", "B"} {
+		body := map[string]interface{}{"id": id, "parents": []string{}}
+		b, _ := json.Marshal(body)
+		resp := httptest.NewRecorder()
+		router.ServeHTTP(resp, httptest.NewRequest(http.MethodPost, "/nodes", bytes.NewReader(b)))
+		if resp.Code != http.StatusCreated {
+			t.Fatalf("failed to create node %s: %d", id, resp.Code)
+		}
 	}
 
-	var payload map[string]interface{}
-	if err := json.Unmarshal(resp.Body.Bytes(), &payload); err != nil {
-		t.Fatalf("bad json: %v", err)
+	// create checkpoint
+	cpReqBody := map[string]string{"id": "cp1"}
+	cpReqJSON, _ := json.Marshal(cpReqBody)
+	respCP := httptest.NewRecorder()
+	router.ServeHTTP(respCP, httptest.NewRequest(http.MethodPost, "/checkpoints", bytes.NewReader(cpReqJSON)))
+	if respCP.Code != http.StatusCreated {
+		t.Fatalf("expected 201 for checkpoint, got %d, body: %s", respCP.Code, respCP.Body.String())
 	}
 
-	if payload["status"] != "consistent" {
-		t.Fatalf("expected status consistent, got %v", payload["status"])
+	var cp models.Checkpoint
+	if err := json.Unmarshal(respCP.Body.Bytes(), &cp); err != nil {
+		t.Fatalf("invalid checkpoint response: %v", err)
 	}
-	if payload["total_nodes"] != float64(0) {
-		t.Fatalf("expected total_nodes 0, got %v", payload["total_nodes"])
+	if cp.ID != "cp1" {
+		t.Fatalf("expected checkpoint id cp1, got %s", cp.ID)
 	}
-	if payload["consistency_percentage"] != float64(100) {
-		t.Fatalf("expected 100%%, got %v", payload["consistency_percentage"])
+	if cp.NodeCount != 2 {
+		t.Fatalf("expected node_count 2, got %d", cp.NodeCount)
+	}
+	if cp.RootHash == "" {
+		t.Fatalf("expected non-empty root_hash")
+	}
+
+	// latest should be cp1
+	respLatest := httptest.NewRecorder()
+	router.ServeHTTP(respLatest, httptest.NewRequest(http.MethodGet, "/checkpoints/latest", nil))
+	if respLatest.Code != http.StatusOK {
+		t.Fatalf("expected 200 for latest, got %d, body: %s", respLatest.Code, respLatest.Body.String())
+	}
+	var latest models.Checkpoint
+	if err := json.Unmarshal(respLatest.Body.Bytes(), &latest); err != nil {
+		t.Fatalf("invalid latest checkpoint response: %v", err)
+	}
+	if latest.ID != "cp1" {
+		t.Fatalf("expected latest checkpoint cp1, got %s", latest.ID)
 	}
 }
 
-func TestValidateDAGConsistency_ValidChain(t *testing.T) {
+func TestCreateCheckpoint_InvalidBody(t *testing.T) {
 	router, _ := testServer()
-
-	nodeA := map[string]interface{}{"id": "A", "parents": []string{}}
-	bufA, _ := json.Marshal(nodeA)
-	respA := httptest.NewRecorder()
-	router.ServeHTTP(respA, httptest.NewRequest(http.MethodPost, "/nodes", bytes.NewReader(bufA)))
-	if respA.Code != http.StatusCreated {
-		t.Fatalf("create A failed: %d", respA.Code)
-	}
-
-	nodeB := map[string]interface{}{"id": "B", "parents": []string{"A"}}
-	bufB, _ := json.Marshal(nodeB)
-	respB := httptest.NewRecorder()
-	router.ServeHTTP(respB, httptest.NewRequest(http.MethodPost, "/nodes/approve", bytes.NewReader(bufB)))
-	if respB.Code != http.StatusCreated {
-		t.Fatalf("approve B failed: %d", respB.Code)
-	}
-
-	nodeC := map[string]interface{}{"id": "C", "parents": []string{"B"}}
-	bufC, _ := json.Marshal(nodeC)
-	respC := httptest.NewRecorder()
-	router.ServeHTTP(respC, httptest.NewRequest(http.MethodPost, "/nodes/approve", bytes.NewReader(bufC)))
-	if respC.Code != http.StatusCreated {
-		t.Fatalf("approve C failed: %d", respC.Code)
-	}
-
 	resp := httptest.NewRecorder()
-	router.ServeHTTP(resp, httptest.NewRequest(http.MethodGet, "/sync/validate", nil))
-	if resp.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d, body=%s", resp.Code, resp.Body.String())
-	}
-
-	var payload map[string]interface{}
-	if err := json.Unmarshal(resp.Body.Bytes(), &payload); err != nil {
-		t.Fatalf("bad json: %v", err)
-	}
-	if payload["status"] != "consistent" {
-		t.Fatalf("expected consistent, got %v", payload["status"])
-	}
-	if payload["total_nodes"] != float64(3) {
-		t.Fatalf("expected total_nodes 3, got %v", payload["total_nodes"])
+	router.ServeHTTP(resp, httptest.NewRequest(http.MethodPost, "/checkpoints", bytes.NewReader([]byte(`{}`))))
+	if resp.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for invalid body, got %d", resp.Code)
 	}
 }
 
-func TestValidateDAGConsistency_Inconsistent(t *testing.T) {
-	router, mockRepo := testServer()
-
-	nodeA := map[string]interface{}{"id": "A", "parents": []string{}}
-	bufA, _ := json.Marshal(nodeA)
-	respA := httptest.NewRecorder()
-	router.ServeHTTP(respA, httptest.NewRequest(http.MethodPost, "/nodes", bytes.NewReader(bufA)))
-	if respA.Code != http.StatusCreated {
-		t.Fatalf("create A failed: %d", respA.Code)
-	}
-
-	nodeB := map[string]interface{}{"id": "B", "parents": []string{"A"}}
-	bufB, _ := json.Marshal(nodeB)
-	respB := httptest.NewRecorder()
-	router.ServeHTTP(respB, httptest.NewRequest(http.MethodPost, "/nodes/approve", bytes.NewReader(bufB)))
-	if respB.Code != http.StatusCreated {
-		t.Fatalf("approve B failed: %d", respB.Code)
-	}
-
-	A, err := mockRepo.GetNode("A")
-	if err != nil {
-		t.Fatalf("get A failed: %v", err)
-	}
-	A.CumulativeWeight = 999
-	if err := mockRepo.PutNode(A); err != nil {
-		t.Fatalf("put A failed: %v", err)
-	}
-
+func TestGetLatestCheckpoint_NoCheckpoint(t *testing.T) {
+	router, _ := testServer()
 	resp := httptest.NewRecorder()
-	router.ServeHTTP(resp, httptest.NewRequest(http.MethodGet, "/sync/validate", nil))
-	if resp.Code != http.StatusConflict {
-		t.Fatalf("expected 409, got %d, body=%s", resp.Code, resp.Body.String())
+	router.ServeHTTP(resp, httptest.NewRequest(http.MethodGet, "/checkpoints/latest", nil))
+	if resp.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 when no checkpoints, got %d", resp.Code)
+	}
+}
+
+func TestGetLatestCheckpoint_ReturnsLatest(t *testing.T) {
+	router, _ := testServer()
+
+	// create a node so node_count > 0
+	body := map[string]interface{}{"id": "A", "parents": []string{}}
+	b, _ := json.Marshal(body)
+	respNode := httptest.NewRecorder()
+	router.ServeHTTP(respNode, httptest.NewRequest(http.MethodPost, "/nodes", bytes.NewReader(b)))
+	if respNode.Code != http.StatusCreated {
+		t.Fatalf("failed to create node: %d", respNode.Code)
 	}
 
-	var payload map[string]interface{}
-	if err := json.Unmarshal(resp.Body.Bytes(), &payload); err != nil {
-		t.Fatalf("bad json: %v", err)
+	// cp1
+	cp1 := httptest.NewRecorder()
+	router.ServeHTTP(cp1, httptest.NewRequest(http.MethodPost, "/checkpoints", bytes.NewReader([]byte(`{"id":"cp1"}`))))
+	if cp1.Code != http.StatusCreated {
+		t.Fatalf("expected 201 for cp1, got %d", cp1.Code)
 	}
-	if payload["status"] != "inconsistent" {
-		t.Fatalf("expected inconsistent, got %v", payload["status"])
+
+	// ensure different timestamp
+	time.Sleep(2 * time.Millisecond)
+
+	// cp2
+	cp2 := httptest.NewRecorder()
+	router.ServeHTTP(cp2, httptest.NewRequest(http.MethodPost, "/checkpoints", bytes.NewReader([]byte(`{"id":"cp2"}`))))
+	if cp2.Code != http.StatusCreated {
+		t.Fatalf("expected 201 for cp2, got %d", cp2.Code)
+	}
+
+	// latest should be cp2
+	latest := httptest.NewRecorder()
+	router.ServeHTTP(latest, httptest.NewRequest(http.MethodGet, "/checkpoints/latest", nil))
+	if latest.Code != http.StatusOK {
+		t.Fatalf("expected 200 for latest, got %d, body: %s", latest.Code, latest.Body.String())
+	}
+	var got models.Checkpoint
+	if err := json.Unmarshal(latest.Body.Bytes(), &got); err != nil {
+		t.Fatalf("invalid latest checkpoint response: %v", err)
+	}
+	if got.ID != "cp2" {
+		t.Fatalf("expected latest checkpoint cp2, got %s", got.ID)
 	}
 }
